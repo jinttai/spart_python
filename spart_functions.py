@@ -60,7 +60,7 @@ def euler_dcm(e, alpha):
 def quat_dcm(q):
     q = np.asarray(q).flatten()
     assert len(q) == 4, 'quaternion length error'
-    q0, q1, q2, q3 = q
+    q1, q2, q3, q0 = q
     return np.array([
         [1 - 2 * (q2**2 + q3**2), 2 * (q1 * q2 - q0 * q3), 2 * (q1 * q3 + q0 * q2)],
         [2 * (q1 * q2 + q0 * q3), 1 - 2 * (q1**2 + q3**2), 2 * (q2 * q3 - q0 * q1)],
@@ -86,7 +86,7 @@ def accelerations(t0, tL, P0, pm, Bi0, Bij, u0, um, u0dot, umdot, robot):
                                                             [skew_diff, np.zeros((3,3))]]) @ t0).flatten()
         else:
             skew_diff = skew_symmetric(tL[3:6, parent_link-1] - tL[3:6, i])
-            tLdot[:, i] = (Bij[:, :, i, parent_link] @ tLdot[:, parent_link-1] + 
+            tLdot[:, i] = (Bij[:, :, i, parent_link-1] @ tLdot[:, parent_link-1] + 
                            np.block([[np.zeros((3,6))], 
                                      [skew_diff, np.zeros((3,3))]]) @ tL[:, parent_link-1]).flatten()
         if robot['joints'][i]['type'] != 0:
@@ -127,8 +127,11 @@ def kinematics(R0, r0, qm, robot):
     RL = TL[:3, :3, :]
     rJ = TJ[:3, 3, :]
     rL = TL[:3, 3, :]
-    e = np.array([RJ[:, :, i] @ robot['joints'][i]['axis'] for i in range(n)]).T
-    g = np.array([rL[:, i] - rJ[:, robot['links'][i]['parent_joint'] - 1] for i in range(n)]).T
+    e = np.zeros((3, n))
+    g = np.zeros((3, n))
+    for i in range(n):
+        e[:, i] = RJ[:, :, i] @ robot['joints'][i]['axis']
+        g[:, i] = rL[:, i] - rJ[:, robot['links'][i]['parent_joint'] - 1]
     return RJ, RL, rJ, rL, e, g
 
 def diff_kinematics(R0, r0, rL, e, g, robot):
@@ -159,9 +162,9 @@ def velocities(Bij, Bi0, P0, pm, u0, um, robot):
     for i in range(n):
         parent_link = robot['joints'][i]['parent_link']
         if parent_link == 0:
-            tL[:, i] = Bi0[:, :, i] @ t0
+            tL[:, i] = (Bi0[:, :, i] @ t0).flatten()
         else:
-            tL[:, i] = Bij[:, :, i, parent_link - 1] @ tL[:, parent_link - 1]
+            tL[:, i] = Bij[:, :, i, i - 1] @ tL[:, i - 1]
         if robot['joints'][i]['type'] != 0:
             q_id = robot['joints'][i]['q_id']
             tL[:, i] += pm[:, i] * um[q_id-1]
@@ -281,7 +284,7 @@ def convective_inertia_matrix(t0, tL, I0, Im, M0_tilde, Mm_tilde, Bij, Bi0, P0, 
     Cm = np.zeros((n_q, n_q))
     for j in range(n):
         for i in range(n):
-            if robot['joints'][i]['type'] != 0 and robot['joints'][j]['type'] != 0:
+            if robot['joints'][i]['type'] != 0 and robot['joints'][j]['type'] != 0 and (robot['con']['branch'][i, j] == 1 or robot['con']['branch'][j, i] == 1):
                 if i <= j:
                     children = np.where(robot['con']['child'][j, :] == 1)[0]
                     child_con = sum(Bij[:, :, k, i].T @ Hij_tilde[:, :, k, j] for k in children)
