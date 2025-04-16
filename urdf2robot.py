@@ -235,8 +235,6 @@ def urdf2robot(filename, verbose_flag=False):
             else:
                 rpy = [0.0, 0.0, 0.0]
             joint_info['T'] = make_transform(xyz, rpy)
-            # We do NOT multiply by transform_inv(parent.T) because
-            # URDF joint origin is already in parent's link frame.
 
         # <axis>
         axis_el = joint_xml.find('axis')
@@ -266,7 +264,7 @@ def urdf2robot(filename, verbose_flag=False):
             # Register this joint in the child's parent_joint
             if child_name in links_map:
                 links_map[child_name]['parent_joint'].append(joint_name)
-
+        joint_info['T'] = transform_inv(links_map[joint_info['parent_link']]['T']) @ joint_info['T']
         joints_map[joint_name] = joint_info
 
     # Identify base link (the link with no parent joint)

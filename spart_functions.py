@@ -248,7 +248,7 @@ def convective_inertia_matrix(t0, tL, I0, Im, M0_tilde, Mm_tilde, Bij, Bi0, P0, 
     Mdot_tilde = np.zeros((6, 6, n))
     for i in reversed(range(n)):
         Mdot_tilde[:, :, i] = Mdot[:, :, i]
-        children = np.where(robot['con']['child'][i, :] == 1)[0]
+        children = np.where(robot['con']['child'][:, i] == 1)[0]
         for j in children:
             Mdot_tilde[:, :, i] += Mdot_tilde[:, :, j]
 
@@ -268,7 +268,7 @@ def convective_inertia_matrix(t0, tL, I0, Im, M0_tilde, Mm_tilde, Bij, Bi0, P0, 
     for i in reversed(range(n)):
         for j in reversed(range(n)):
             Hij_tilde[:, :, i, j] = Mm_tilde[:, :, i] @ Bdotij[:, :, i, j]
-            children = np.where(robot['con']['child'][i, :] == 1)[0]
+            children = np.where(robot['con']['child'][:, i] == 1)[0]
             for k in children:
                 Hij_tilde[:, :, i, j] += Bij[:, :, k, i].T @ Hij_tilde[:, :, k, i]
 
@@ -277,7 +277,7 @@ def convective_inertia_matrix(t0, tL, I0, Im, M0_tilde, Mm_tilde, Bij, Bi0, P0, 
         Bdot = np.block([[np.zeros((3,3)), np.zeros((3,3))],
                          [skew_symmetric(t0[3:6] - tL[3:6, i].reshape(3,1)), np.zeros((3,3))]])
         Hi0_tilde[:, :, i] = Mm_tilde[:, :, i] @ Bdot
-        children = np.where(robot['con']['child'][i, :] == 1)[0]
+        children = np.where(robot['con']['child'][:, i] == 1)[0]
         for k in children:
             Hi0_tilde[:, :, i] += Bij[:, :, k, i].T @ Hij_tilde[:, :, k, i]
 
@@ -286,7 +286,7 @@ def convective_inertia_matrix(t0, tL, I0, Im, M0_tilde, Mm_tilde, Bij, Bi0, P0, 
         for i in range(n):
             if robot['joints'][i]['type'] != 0 and robot['joints'][j]['type'] != 0 and (robot['con']['branch'][i, j] == 1 or robot['con']['branch'][j, i] == 1):
                 if i <= j:
-                    children = np.where(robot['con']['child'][j, :] == 1)[0]
+                    children = np.where(robot['con']['child'][:, j] == 1)[0]
                     child_con = sum(Bij[:, :, k, i].T @ Hij_tilde[:, :, k, j] for k in children)
                     Cm[robot['joints'][i]['q_id'] - 1, robot['joints'][j]['q_id'] - 1] = (
                         pm[:, i].T @ (Bij[:, :, j, i].T @ Mm_tilde[:, :, j] @ Omega[:, :, j] + child_con + Mdot_tilde[:, :, j]) @ pm[:, j]
@@ -306,7 +306,7 @@ def convective_inertia_matrix(t0, tL, I0, Im, M0_tilde, Mm_tilde, Bij, Bi0, P0, 
             if j == n-1:
                 C0m[:, robot['joints'][j]['q_id'] - 1] = P0.T @ (Bi0[:, :, j].T @ Mm_tilde[:, :, j] @ Omega[:, :, j] + Mdot_tilde[:, :, j]) @ pm[:, j]
             else:
-                children = np.where(robot['con']['child'][j, :] == 1)[0]
+                children = np.where(robot['con']['child'][:, j] == 1)[0]
                 child_con = sum(Bi0[:, :, k].T @ Hij_tilde[:, :, k, j] for k in children)
                 C0m[:, robot['joints'][j]['q_id'] - 1] = P0.T @ (Bi0[:, :, j].T @ Mm_tilde[:, :, j] @ Omega[:, :, j] + child_con + Mdot_tilde[:, :, j]) @ pm[:, j]
 
