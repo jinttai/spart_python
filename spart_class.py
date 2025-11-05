@@ -18,10 +18,11 @@ def euler_dcm(e, alpha):
 
 def quat_dcm(q):
     """
-    Convert a quaternion (q0, q1, q2, q3) to a 3x3 direction cosine matrix.
-    inertial quaternion to inertial frame rotation matrix
+    Convert a quaternion to a 3x3 direction cosine matrix.
+    Convention matches spart_functions: q = [q1, q2, q3, q0] = [x, y, z, w].
     """
-    q0, q1, q2, q3 = np.asarray(q).flatten()
+    q = np.asarray(q).flatten()
+    q1, q2, q3, q0 = q  # [x, y, z, w]
     return np.array([
         [1 - 2 * (q2**2 + q3**2), 2 * (q1 * q2 - q0 * q3),     2 * (q1 * q3 + q0 * q2)],
         [2 * (q1 * q2 + q0 * q3),     1 - 2 * (q1**2 + q3**2), 2 * (q2 * q3 - q0 * q1)],
@@ -308,10 +309,10 @@ class RobotKinematicsDynamics:
             Mm_tilde[:,:, i] = Mi_tilde
             
             # Add children’s composite
-            # e.g. children = np.where(robot['con']['child'][i,:] == 1)[0]
-            # but your 'con' might store it differently. 
-            # For example, maybe 'child[i,:]' means all links that have i as parent.
-            children = np.where(self.robot['con']['child'][i,:] == 1)[0]
+            # Connectivity convention (see urdf2robot.connectivity_map):
+            #   child[child_idx, parent_idx] == 1
+            # Therefore, children of link i are rows where child[:, i] == 1
+            children = np.where(self.robot['con']['child'][:, i] == 1)[0]
             for j in children:
                 # M_i += B_ij^T M_j B_ij
                 Mm_tilde[:,:, i] += (
