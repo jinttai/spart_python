@@ -2,7 +2,7 @@ import torch
 import xml.etree.ElementTree as ET
 import sys
 
-def angles_321_dcm(rpy):
+def angles_321_dcm(rpy, device=None, dtype=None):
     """
     Equivalent to the MATLAB Angles321_DCM(rpy'),
     which applies rotations in Z-Y-X order (3-2-1).
@@ -11,38 +11,61 @@ def angles_321_dcm(rpy):
     """
     if not isinstance(rpy, torch.Tensor):
         rpy = torch.tensor(rpy, dtype=torch.float32)
+    
+    if device is None:
+        device = rpy.device
+    if dtype is None:
+        dtype = rpy.dtype
         
     rx, ry, rz = rpy[0], rpy[1], rpy[2]
 
     # Rotation about z (yaw)
     c_rz, s_rz = torch.cos(rz), torch.sin(rz)
-    Rz = torch.tensor([
-        [c_rz, -s_rz, 0],
-        [s_rz,  c_rz, 0],
-        [0,     0,    1]
-    ], dtype=torch.float32)
+    zero = torch.tensor(0.0, device=device, dtype=dtype)
+    one = torch.tensor(1.0, device=device, dtype=dtype)
+    
+    # Rz = [
+    #    [c_rz, -s_rz, 0],
+    #    [s_rz,  c_rz, 0],
+    #    [0,     0,    1]
+    # ]
+    Rz = torch.stack([
+        torch.stack([c_rz, -s_rz, zero]),
+        torch.stack([s_rz,  c_rz, zero]),
+        torch.stack([zero,  zero, one])
+    ])
 
     # Rotation about y (pitch)
     c_ry, s_ry = torch.cos(ry), torch.sin(ry)
-    Ry = torch.tensor([
-        [c_ry, 0, s_ry],
-        [0,    1, 0],
-        [-s_ry, 0, c_ry]
-    ], dtype=torch.float32)
+    # Ry = [
+    #    [c_ry, 0, s_ry],
+    #    [0,    1, 0],
+    #    [-s_ry, 0, c_ry]
+    # ]
+    Ry = torch.stack([
+        torch.stack([c_ry, zero, s_ry]),
+        torch.stack([zero, one, zero]),
+        torch.stack([-s_ry, zero, c_ry])
+    ])
 
     # Rotation about x (roll)
     c_rx, s_rx = torch.cos(rx), torch.sin(rx)
-    Rx = torch.tensor([
-        [1, 0,     0],
-        [0, c_rx, -s_rx],
-        [0, s_rx,  c_rx]
-    ], dtype=torch.float32)
+    # Rx = [
+    #    [1, 0,     0],
+    #    [0, c_rx, -s_rx],
+    #    [0, s_rx,  c_rx]
+    # ]
+    Rx = torch.stack([
+        torch.stack([one, zero, zero]),
+        torch.stack([zero, c_rx, -s_rx]),
+        torch.stack([zero, s_rx,  c_rx])
+    ])
 
     # Combined rotation for 3-2-1 (Z-Y-X)
     return Rz @ Ry @ Rx
 
 
-def make_transform(xyz=None, rpy=None):
+def make_transform(xyz=None, rpy=None, device=None, dtype=None):
     """
     Create a 4x4 homogeneous transform from xyz translation and RPY rotation.
     xyz, rpy: length-3 lists/tuples (in meters, radians)
@@ -58,8 +81,16 @@ def make_transform(xyz=None, rpy=None):
     if not isinstance(rpy, torch.Tensor):
         rpy = torch.tensor(rpy, dtype=torch.float32)
 
-    T = torch.eye(4, dtype=torch.float32)
-    T[0:3, 0:3] = angles_321_dcm(rpy)
+    if device is None:
+        device = xyz.device
+    if dtype is None:
+        dtype = xyz.dtype
+        
+    xyz = xyz.to(device=device, dtype=dtype)
+    rpy = rpy.to(device=device, dtype=dtype)
+
+    T = torch.eye(4, device=device, dtype=dtype)
+    T[0:3, 0:3] = angles_321_dcm(rpy, device=device, dtype=dtype)
     T[0:3, 3] = xyz
     return T
 
@@ -68,9 +99,12 @@ def transform_inv(T):
     """
     Invert a 4x4 homogeneous transform.
     """
+    device = T.device
+    dtype = T.dtype
+    
     R = T[0:3, 0:3]
     p = T[0:3, 3]
-    T_inv = torch.eye(4, dtype=torch.float32)
+    T_inv = torch.eye(4, device=device, dtype=dtype)
     T_inv[0:3, 0:3] = R.T
     T_inv[0:3, 3] = -R.T @ p
     return T_inv
@@ -81,6 +115,11 @@ def connectivity_map(robot):
     if n == 0:
         return None, None, None
 
+    # Connectivity maps are integer matrices (indices), so usually on CPU or GPU is fine but they don't have gradients.
+    # We'll create them on CPU by default or use the device of other tensors if we had access to one.
+    # Since this function takes 'robot' dict, it's safer to stick to default (CPU) for indices 
+    # unless we explicitly want them on GPU. However, indices are usually used for slicing or logic, not heavy computation.
+    
     branch = torch.zeros((n, n), dtype=torch.long)
     child = torch.zeros((n, n), dtype=torch.long)
     child_base = torch.zeros(n, dtype=torch.long)
@@ -116,10 +155,10 @@ def connectivity_map(robot):
     return branch, child, child_base
 
 
-def urdf2robot(filename, verbose_flag=False):
+def urdf2robot(filename, verbose_flag=False, device='cpu', dtype=torch.float32):
     """
-    Reads a URDF file and returns a dictionary-based robot model,
-    similar in spirit to the MATLAB urdf2robot function.
+    Reads a URDF file and returns a dictionary-based robot model.
+    Added device and dtype arguments to initialize tensors on the correct device.
     """
     # Parse URDF
     tree = ET.parse(filename)
@@ -154,11 +193,11 @@ def urdf2robot(filename, verbose_flag=False):
         link_name = link_xml.attrib.get('name', '')
         link_info = {
             'name': link_name,
-            'T': torch.eye(4, dtype=torch.float32),  # store inertial offset transform
+            'T': torch.eye(4, device=device, dtype=dtype),  # store inertial offset transform
             'parent_joint': [],
             'child_joint': [],
             'mass': 0.0,
-            'inertia': torch.zeros((3, 3), dtype=torch.float32)
+            'inertia': torch.zeros((3, 3), device=device, dtype=dtype)
         }
         # <inertial>
         inertial = link_xml.find('inertial')
@@ -176,7 +215,9 @@ def urdf2robot(filename, verbose_flag=False):
                     rpy = [float(x) for x in rpy_str.split()]
                 else:
                     rpy = [0.0, 0.0, 0.0]
-                link_info['T'] = make_transform(xyz, rpy)
+                
+                # Pass device/dtype to make_transform
+                link_info['T'] = make_transform(xyz, rpy, device=device, dtype=dtype)
 
             # <mass value="">
             mass_el = inertial.find('mass')
@@ -193,11 +234,14 @@ def urdf2robot(filename, verbose_flag=False):
                 ixy = float(inertia_el.attrib.get('ixy', 0))
                 iyz = float(inertia_el.attrib.get('iyz', 0))
                 ixz = float(inertia_el.attrib.get('ixz', 0))
+                
+                # Use torch.tensor with device/dtype
+                # Note: inertia values are constants here, so no gradients needed from XML parsing
                 link_info['inertia'] = torch.tensor([
                     [ixx, ixy, ixz],
                     [ixy, iyy, iyz],
                     [ixz, iyz, izz]
-                ], dtype=torch.float32)
+                ], device=device, dtype=dtype)
 
         links_map[link_name] = link_info
 
@@ -215,8 +259,8 @@ def urdf2robot(filename, verbose_flag=False):
             'type': 0,  # 0 = fixed, 1 = revolute/continuous, 2 = prismatic
             'parent_link': '',
             'child_link': '',
-            'T': torch.eye(4, dtype=torch.float32),  # parent link frame
-            'axis': torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
+            'T': torch.eye(4, device=device, dtype=dtype),  # parent link frame
+            'axis': torch.tensor([0.0, 0.0, 0.0], device=device, dtype=dtype)
         }
         if joint_type_name in ['revolute', 'continuous']:
             joint_info['type'] = 1
@@ -240,7 +284,7 @@ def urdf2robot(filename, verbose_flag=False):
                 rpy = [float(x) for x in rpy_str.split()]
             else:
                 rpy = [0.0, 0.0, 0.0]
-            joint_info['T'] = make_transform(xyz, rpy)
+            joint_info['T'] = make_transform(xyz, rpy, device=device, dtype=dtype)
 
         # <axis>
         axis_el = joint_xml.find('axis')
@@ -248,7 +292,7 @@ def urdf2robot(filename, verbose_flag=False):
             axis_str = axis_el.attrib.get('xyz', '')
             if axis_str:
                 axis_vals = [float(x) for x in axis_str.split()]
-                joint_info['axis'] = torch.tensor(axis_vals, dtype=torch.float32)
+                joint_info['axis'] = torch.tensor(axis_vals, device=device, dtype=dtype)
             elif joint_info['type'] != 0:
                 # A moving joint must have an axis
                 raise ValueError(f"Joint {joint_name} is moving but has no axis.")
@@ -271,6 +315,7 @@ def urdf2robot(filename, verbose_flag=False):
             if child_name in links_map:
                 links_map[child_name]['parent_joint'].append(joint_name)
         
+        # transform_inv preserves gradients if T has them, but here T is constant from URDF
         joint_info['T'] = transform_inv(links_map[joint_info['parent_link']]['T']) @ joint_info['T']
         joints_map[joint_name] = joint_info
 
@@ -381,6 +426,14 @@ def urdf2robot(filename, verbose_flag=False):
 
     # Add connectivity map if needed
     branch, child, child_base = connectivity_map(robot)
+    
+    # Move connectivity maps to device if needed, but they are indices (long)
+    # Typically kept on CPU unless advanced indexing is used on GPU
+    if device != 'cpu':
+        branch = branch.to(device=device)
+        child = child.to(device=device)
+        child_base = child_base.to(device=device)
+        
     robot['con'] = {
         'branch': branch,
         'child': child,
@@ -395,7 +448,11 @@ if __name__ == '__main__':
         print("Usage: python urdf2robot_torch.py <your_urdf_file>")
         sys.exit(1)
 
-    robot_model, robot_keys = urdf2robot(sys.argv[1], verbose_flag=True)
+    # Example: Load on GPU if available
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Loading robot on device: {device}")
+    
+    robot_model, robot_keys = urdf2robot(sys.argv[1], verbose_flag=True, device=device)
     print("\n=== Robot Model ===")
     print("name:", robot_model['name'])
     print("n_q:", robot_model['n_q'])
@@ -406,4 +463,3 @@ if __name__ == '__main__':
     print("\nkeys:", robot_keys)
     print("\n=== Connectivity Map ===")
     print(robot_model['con'])
-
