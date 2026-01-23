@@ -3,12 +3,12 @@ import casadi as ca
 """
 CasADi‑compatible floating‑base robotics utilities
 =================================================
-All functions mirror the original NumPy API but operate on **CasADi MX** objects
+All functions mirror the original NumPy API but operate on **CasADi SX** objects
 so the complete dynamics pipeline is symbolically differentiable.  Tensors with
 rank > 2 are represented as Python *lists* of 2‑D MX matrices:
 
-* 6 × 6 × n            → ``list[ca.MX(6,6)]`` length *n*
-* 6 × 6 × n × n        → ``list[list[ca.MX(6,6)]]`` (row‑major)
+* 6 × 6 × n            → ``list[ca.SX(6,6)]`` length *n*
+* 6 × 6 × n × n        → ``list[list[ca.SX(6,6)]]`` (row‑major)
 
 Only state variables (pose, velocities, accelerations, joint coordinates) need
 be MX; constant robot parameters can stay NumPy/Python.
@@ -35,17 +35,17 @@ C0, C0m, Cm0, Cm                   = ft.convective_inertia_matrix(t0, tL, I0, Im
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _zeros(m: int, n: int) -> ca.MX:
-    return ca.MX.zeros(m, n)
+def _zeros(m: int, n: int) -> ca.SX:
+    return ca.SX.zeros(m, n)
 
 
-def _eye(n: int) -> ca.MX:
-    return ca.MX.eye(n)
+def _eye(n: int) -> ca.SX:
+    return ca.SX.eye(n)
 
 
-def _skew(v: ca.MX) -> ca.MX:
+def _skew(v: ca.SX) -> ca.SX:
     v = ca.reshape(v, 3, 1)
-    z = ca.MX(0)
+    z = ca.SX(0)
     return ca.vertcat(
         ca.hcat([   z, -v[2],  v[1]]),
         ca.hcat([ v[2],    z, -v[0]]),
@@ -53,20 +53,20 @@ def _skew(v: ca.MX) -> ca.MX:
     )
 
 
-def _bmat(rows) -> ca.MX:
+def _bmat(rows) -> ca.SX:
     return ca.vertcat(*[ca.hcat(r) for r in rows])
 
 # ---------------------------------------------------------------------------
 # Orientation utilities
 # ---------------------------------------------------------------------------
 
-def euler_dcm(e: ca.MX, alpha: ca.MX) -> ca.MX:
+def euler_dcm(e: ca.SX, alpha: ca.SX) -> ca.SX:
     q_vec = e * ca.sin(alpha / 2)
     q0    = ca.cos(alpha / 2)
     return quat_dcm(ca.vertcat(q_vec, q0))
 
 
-def quat_dcm(q: ca.MX) -> ca.MX:
+def quat_dcm(q: ca.SX) -> ca.SX:
     q1, q2, q3, q0 = q[0], q[1], q[2], q[3]
     return ca.vertcat(
         ca.hcat([1 - 2*(q2**2 + q3**2), 2*(q1*q2 - q0*q3),     2*(q1*q3 + q0*q2)]),
@@ -74,7 +74,7 @@ def quat_dcm(q: ca.MX) -> ca.MX:
         ca.hcat([2*(q1*q3 - q0*q2),     2*(q2*q3 + q0*q1),     1 - 2*(q1**2 + q2**2)])
     )
     
-def quat_dot(q: ca.MX, w: ca.MX) -> ca.MX:
+def quat_dot(q: ca.SX, w: ca.SX) -> ca.SX:
     # w = [w1, w2, w3] is angular velocity in body-fixed CCS
     q1, q2, q3, q0 = q[0], q[1], q[2], q[3]
     w1, w2, w3     = w[0], w[1], w[2]
@@ -87,7 +87,7 @@ def quat_dot(q: ca.MX, w: ca.MX) -> ca.MX:
     )
     return q_dot
 
-def dcm_quat(DCM: ca.MX) -> ca.MX:
+def dcm_quat(DCM: ca.SX) -> ca.SX:
     
     r11 = DCM[0, 0]
     r12 = DCM[0, 1]
@@ -121,7 +121,7 @@ def dcm_quat(DCM: ca.MX) -> ca.MX:
     x4 = (r13 + r31) / (4 * z4)
     y4 = (r23 + r32) / (4 * z4)
     
-    quat = ca.MX.zeros(4)
+    quat = ca.SX.zeros(4)
     
     cond1 = trace > 0
     cond2 = ca.logic_and(ca.logic_not(cond1), ca.logic_and(r11 > r22, r11 > r33))
@@ -149,23 +149,23 @@ def dcm_quat(DCM: ca.MX) -> ca.MX:
 # Forward kinematics
 # ---------------------------------------------------------------------------
 
-def kinematics(R0: ca.MX, r0: ca.MX, qm: ca.MX, robot: dict):
+def kinematics(R0: ca.SX, r0: ca.SX, qm: ca.SX, robot: dict):
     n = robot['n_links_joints']
-    T0 = _bmat([[R0, r0], [ca.MX.zeros(1, 3), ca.MX(1)]])
+    T0 = _bmat([[R0, r0], [ca.SX.zeros(1, 3), ca.SX(1)]])
     TJ, TL = [None]*n, [None]*n
     for i in range(n):
         joint   = robot['joints'][i]
         parentL = joint['parent_link']
         TJ[i]   = (T0 if parentL == 0 else TL[parentL - 1]) @ joint['T']
         jtype = joint['type']
-        qi    = qm[joint['q_id'] - 1] if jtype else ca.MX(0)
+        qi    = qm[joint['q_id'] - 1] if jtype else ca.SX(0)
         axis  = joint['axis']
         if jtype == 1:
-            T_q = _bmat([[euler_dcm(axis, qi), _zeros(3, 1)], [ca.MX.zeros(1,3), ca.MX(1)]])
+            T_q = _bmat([[euler_dcm(axis, qi), _zeros(3, 1)], [ca.SX.zeros(1,3), ca.SX(1)]])
         elif jtype == 2:
-            T_q = _bmat([[ _eye(3), ca.reshape(axis*qi, 3, 1)], [ca.MX.zeros(1,3), ca.MX(1)]])
+            T_q = _bmat([[ _eye(3), ca.reshape(axis*qi, 3, 1)], [ca.SX.zeros(1,3), ca.SX(1)]])
         else:
-            T_q = ca.MX.eye(4)
+            T_q = ca.SX.eye(4)
         link  = robot['links'][joint['child_link'] - 1]
         TL[i] = TJ[i] @ T_q @ link['T']
     RJ = ca.hcat([ca.reshape(TJ[i][0:3,0:3], 9, 1) for i in range(n)])
@@ -179,7 +179,7 @@ def kinematics(R0: ca.MX, r0: ca.MX, qm: ca.MX, robot: dict):
 # Differential kinematics building blocks
 # ---------------------------------------------------------------------------
 
-def diff_kinematics(R0: ca.MX, r0: ca.MX, rL: ca.MX, e: ca.MX, g: ca.MX, robot: dict):
+def diff_kinematics(R0: ca.SX, r0: ca.SX, rL: ca.SX, e: ca.SX, g: ca.SX, robot: dict):
     n = robot['n_links_joints']
 
     Bij = [[_zeros(6,6) for _ in range(n)] for _ in range(n)]
@@ -263,7 +263,7 @@ def accelerations(t0, tL, P0, pm, Bi0, Bij, u0, um, u0dot, umdot, robot):
 # Centre of mass of whole system
 # ---------------------------------------------------------------------------
 
-def center_of_mass(r0: ca.MX, rL: ca.MX, robot: dict):
+def center_of_mass(r0: ca.SX, rL: ca.SX, robot: dict):
     m_total = robot['base_link']['mass']
     mass_r  = r0 * m_total
     for i in range(robot['n_links_joints']):
@@ -276,7 +276,7 @@ def center_of_mass(r0: ca.MX, rL: ca.MX, robot: dict):
 # Inertia projection (spatial 6×6) — uses RL flat matrix
 # ---------------------------------------------------------------------------
 
-def inertia_projection(R0: ca.MX, RL: ca.MX, robot: dict):
+def inertia_projection(R0: ca.SX, RL: ca.SX, robot: dict):
     I0 = R0 @ robot['base_link']['inertia'] @ R0.T
     n  = robot['n_links_joints']
     Im = [None]*n
@@ -396,7 +396,7 @@ def convective_inertia_matrix(t0, tL, I0, Im, M0_tilde, Mm_tilde, Bij, Bi0, P0, 
 # Geometric Jacobian
 # ---------------------------------------------------------------------------
 
-def jacobian(rp: ca.MX, r0: ca.MX, rL: ca.MX, P0: ca.MX, pm: ca.MX, link_id: int, robot: dict):
+def jacobian(rp: ca.SX, r0: ca.SX, rL: ca.SX, P0: ca.SX, pm: ca.SX, link_id: int, robot: dict):
     """Jacobian of point *rp* fixed on link *link_id* (1‑based)."""
     J0 = _bmat([[ _eye(3), _zeros(3,3)], [_skew(r0 - rp), _eye(3)]]) @ P0
     n_q = robot['n_q']

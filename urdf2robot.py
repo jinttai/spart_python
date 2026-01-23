@@ -312,6 +312,7 @@ def urdf2robot(filename, verbose_flag=False):
         # Create a new joint entry
         new_joint_id = joint_id + 1
         new_joint = {
+            'name': jinfo['name'],
             'id': new_joint_id,
             'type': jinfo['type'],
             'q_id': -1,  # default if fixed
@@ -333,6 +334,7 @@ def urdf2robot(filename, verbose_flag=False):
         new_link_id = link_id + 1
         cinfo = links_map[child_link_name]
         robot['links'].append({
+            'name': cinfo['name'],
             'id': new_link_id,
             'parent_joint': new_joint_id,
             'T': cinfo['T'],
